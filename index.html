@@ -27,7 +27,7 @@
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
       padding: 2.5rem 2rem;
       width: 100%;
-      max-width: 420px;
+      max-width: 520px;
     }
 
     h1 {
@@ -132,6 +132,67 @@
     .loading.visible {
       display: block;
     }
+
+    .forecast {
+      display: none;
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #eee;
+    }
+
+    .forecast.visible {
+      display: block;
+    }
+
+    .forecast h2 {
+      font-size: 1.1rem;
+      color: #333;
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    .forecast-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.5rem;
+    }
+
+    .forecast-card {
+      background: #f8f9ff;
+      border-radius: 0.75rem;
+      padding: 0.75rem 0.25rem;
+      text-align: center;
+    }
+
+    .forecast-card .day-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 0.25rem;
+    }
+
+    .forecast-card .forecast-icon {
+      width: 40px;
+      height: 40px;
+    }
+
+    .forecast-card .forecast-temps {
+      font-size: 0.85rem;
+      color: #333;
+      font-weight: 600;
+    }
+
+    .forecast-card .forecast-low {
+      color: #999;
+      font-weight: 400;
+    }
+
+    .forecast-card .forecast-desc {
+      font-size: 0.7rem;
+      color: #777;
+      text-transform: capitalize;
+      margin-top: 0.25rem;
+    }
   </style>
 </head>
 <body>
@@ -153,6 +214,11 @@
       <p class="temperature" id="temperature"></p>
       <p class="description" id="description"></p>
     </div>
+
+    <div class="forecast" id="forecast">
+      <h2>5-Day Forecast</h2>
+      <div class="forecast-grid" id="forecast-grid"></div>
+    </div>
   </div>
 
   <script>
@@ -165,6 +231,8 @@
     const form = document.getElementById("search-form");
     const cityInput = document.getElementById("city-input");
     const weatherResult = document.getElementById("weather-result");
+    const forecastSection = document.getElementById("forecast");
+    const forecastGrid = document.getElementById("forecast-grid");
     const errorMessage = document.getElementById("error-message");
     const loading = document.getElementById("loading");
 
@@ -174,25 +242,37 @@
       if (!city) return;
 
       weatherResult.classList.remove("visible");
+      forecastSection.classList.remove("visible");
       errorMessage.classList.remove("visible");
       loading.classList.add("visible");
 
       try {
-        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${API_KEY}&units=metric`;
-        const response = await fetch(url);
+        const encodedCity = encodeURIComponent(city);
+        const weatherUrl = `https://api.openweathermap.org/data/2.5/weather?q=${encodedCity}&appid=${API_KEY}&units=metric`;
+        const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodedCity}&appid=${API_KEY}&units=metric`;
 
-        if (!response.ok) {
-          if (response.status === 401) {
+        const [weatherRes, forecastRes] = await Promise.all([
+          fetch(weatherUrl),
+          fetch(forecastUrl),
+        ]);
+
+        if (!weatherRes.ok) {
+          if (weatherRes.status === 401) {
             throw new Error("Invalid API key. Please check your key and try again.");
           }
-          if (response.status === 404) {
+          if (weatherRes.status === 404) {
             throw new Error(`City "${city}" not found. Please check the spelling.`);
           }
           throw new Error("Something went wrong. Please try again later.");
         }
 
-        const data = await response.json();
-        displayWeather(data);
+        const [weatherData, forecastData] = await Promise.all([
+          weatherRes.json(),
+          forecastRes.json(),
+        ]);
+
+        displayWeather(weatherData);
+        displayForecast(forecastData);
       } catch (err) {
         showError(err.message);
       } finally {
@@ -213,10 +293,61 @@
       errorMessage.classList.remove("visible");
     }
 
+    function displayForecast(data) {
+      forecastGrid.innerHTML = "";
+
+      // Group forecast entries by day, skipping today
+      const today = new Date().toDateString();
+      const days = {};
+
+      for (const entry of data.list) {
+        const date = new Date(entry.dt * 1000);
+        const key = date.toDateString();
+        if (key === today) continue;
+        if (!days[key]) {
+          days[key] = { date, temps: [], entries: [] };
+        }
+        days[key].temps.push(entry.main.temp);
+        days[key].entries.push(entry);
+      }
+
+      // Take the first 5 future days
+      const dayKeys = Object.keys(days).slice(0, 5);
+
+      for (const key of dayKeys) {
+        const { date, temps, entries } = days[key];
+        const high = Math.round(Math.max(...temps));
+        const low = Math.round(Math.min(...temps));
+
+        // Pick the midday entry (closest to 12:00) for icon/description
+        const midday = entries.reduce((best, e) => {
+          const h = new Date(e.dt * 1000).getHours();
+          return Math.abs(h - 12) < Math.abs(new Date(best.dt * 1000).getHours() - 12) ? e : best;
+        });
+
+        const dayName = date.toLocaleDateString("en-US", { weekday: "short" });
+        const icon = midday.weather[0].icon;
+        const desc = midday.weather[0].description;
+
+        const card = document.createElement("div");
+        card.className = "forecast-card";
+        card.innerHTML = `
+          <p class="day-name">${dayName}</p>
+          <img class="forecast-icon" src="https://openweathermap.org/img/wn/${icon}@2x.png" alt="${desc}">
+          <p class="forecast-temps">${high}° <span class="forecast-low">${low}°</span></p>
+          <p class="forecast-desc">${desc}</p>
+        `;
+        forecastGrid.appendChild(card);
+      }
+
+      forecastSection.classList.add("visible");
+    }
+
     function showError(message) {
       errorMessage.textContent = message;
       errorMessage.classList.add("visible");
       weatherResult.classList.remove("visible");
+      forecastSection.classList.remove("visible");
     }
   </script>
 </body>
